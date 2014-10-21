@@ -1,0 +1,164 @@
+---
+title: "filmPredictionML"
+author: "Jared Bowden"
+date: "10/20/2014"
+output: html_document
+---
+
+Data source: http://grouplens.org/datasets/movielens/
+
+## Preprocessing
+Nuke it from space 
+```{r remove objects}
+# Remove all objects from memory
+rm(list=ls())
+```
+
+Read in the data 
+```{r Read in data}
+# Set the working directory
+setwd("~/Dropbox/dataIncubator/project//hetrec2011-movielens-2k-v2/")
+
+# Read in the file as a csv
+firstData <- read.table("./user_ratedmovies-timestamps.dat", 
+  header = TRUE, colClasses = "character") 
+
+# THE WAY BACK
+movieData <- firstData
+```
+
+These time stamps are kinda confusing...
+
+Alright, we have a bunch of 13 digit numbers that are not converting to dates.
+Oh. I think this is UTC. We can deal with this.
+```{r debug the time stamps}
+# Some indication that we might need to divide by 1000. Let's run a test
+# case: 1223625490000
+format(as.POSIXct((1223625490000/1000), origin='1970-01-01'), 
+       format='%Y/%m/%d %h')
+
+# Looks good. Let's convert the rest of the dates.
+movieData$dateInfo <- as.numeric(movieData$timestamp)/1000
+
+movieData$date <- format(as.POSIXct(movieData$dateInfo,origin='1970-01-01'), 
+       format='%Y/%m/%d')
+
+# Confirm that this is looking good
+head(movieData)
+tail(movieData) # Looks good
+
+# Convert these values to dates
+movieData$date <- as.Date(movieData$date)
+```
+
+Let's review the integrity of the data set.
+
+Quick review of the data
+```{r Look at the column names}
+# Check the column names 
+names(movieData)
+
+# and the data structure. 
+str(movieData) # There are a few data types in here that will need to change
+
+# Convert userID, movieID, and rating values to numeric data type.
+movieData$userID <- as.numeric(movieData$userID)
+movieData$movieID <- as.numeric(movieData$movieID)
+movieData$rating <- as.numeric(movieData$rating)
+
+# Confirm that data type changes have been applied
+str(movieData)
+```
+
+Check for NA values
+```{r NA values}
+# Check for NA values. 
+colSums(is.na(movieData)) # Looks good
+```
+
+Now, I'll want to parse a few more data points from this date information.
+```{r parse date data}
+library(lubridate)
+
+# Hmm... It looks like all of this date information is out of order. Let's
+# fix that
+movieOrder <- movieData[order(movieData$date, decreasing = FALSE), ] 
+
+# Let's start by parsing the month that the review was made.
+movieOrder$dateMonth <- month(movieOrder$date, label = T)
+
+# I'm also interested in adding week-of-the-year information, as well as year.
+# We'll need this to forecast a time series, later.
+movieOrder$dateWeek <- week(movieOrder$date)
+movieOrder$dateYear <- year(movieOrder$date)
+
+# Confirm that this is looking good
+head(movieOrder)
+tail(movieOrder) # Looks good
+
+# Date range for the dataset appears to be 1997/09/17 - 2009/01/04
+```
+
+## Exploratory data analysis
+
+The first question I want to address: do average movie ratings change across
+months? To put this another way: is there any truth to the notion that summer
+films poorly rated, and increase steadily leading up to Oscar-season?
+```{r ratings by month}
+# Let's calculate average rating by month
+movieMonth <- aggregate(rating ~ dateMonth, data = movieOrder, mean)
+
+# Let's graph this information
+library(ggplot2)
+
+ggplot(movieMonth, aes(group = 1, x = dateMonth, y = rating, 
+    color = movieMonth$dateMonth, fill = movieMonth$dateMonth)) +
+    geom_point(size = 7) +    
+    geom_line(color = "grey") +
+    ylab("Average rating (out of 5)") +
+    xlab("Month") +
+    ggtitle("Movie ratings from 1997 - 2008, averaged by month") +
+    theme(axis.text.x = element_text(angle = 270, hjust = 1, size = 12), 
+          legend.title = element_blank(),
+          axis.text.y = element_text(size = 12)) 
+```
+
+The second question I want to address: can we use seasonal patterns in movie
+ratings to accuratly forcast future ratings?
+```{r time series forecast}
+library(forecast)
+
+# Let's calculate average rating by month and year.
+movieMY <- aggregate(rating ~ dateYear + dateMonth, data = movieOrder, mean)
+
+# Now, sort the resulting data frame by time.
+movieTS <- movieMY[order(movieMY$dateYear, 
+                            movieMY$dateYear, decreasing = FALSE), ] 
+
+# But to do this, we are going to need complete years. This means dropping 
+# January of 2009, and Sept - Dec. 1997
+subTS <- movieTS[5:(length(movieTS$dateYear) - 1), ]
+
+# Now that this is is sorted, convert to time, and paste these values. 
+subTS$dateMonth <- month(as.numeric(subTS$dateMonth), label = T)
+subTS$date <- paste(subTS$dateMonth, subTS$dateYear)
+
+# Make a time series
+timeSeries <- ts(subTS$rating, frequency = 12, start = c(1998, 1))
+
+# Forcast from 2008 - 2015
+HWtimeSeries <- HoltWinters(timeSeries)
+HWtimeSeries2 <- forecast.HoltWinters(HWtimeSeries, h = 72)
+
+# And plot this forecast
+plot.forecast(HWtimeSeries2, ylab = "Average rating (out of 5)",
+              xlab = "Date (years)",
+              main = "Forecasted movie ratings from 2008 to 2015")
+```
+
+## Machine learning
+Future directions.
+
+
+
+
